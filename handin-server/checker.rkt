@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require (for-syntax racket/base) "utils.rkt"
-         racket/file racket/class racket/gui/base)
+         racket/file racket/class racket/gui/base
+         (only-in racket/match exn:misc:match?))
 
 (provide (except-out (all-from-out racket/base) #%module-begin)
          (all-from-out "utils.rkt"))
@@ -327,19 +328,31 @@
       (set-box! cur (append (unbox cur) new))
       (thread-cell-set! added-lines (box new)))))
 
+;; when an error occurs, prepend text to indicate which
+;; test case failed. This can be done safely only when the
+;; exception is not 'skipped?', and when it contains no
+;; opaque values.
+;; SPECIAL-CASE HACK: grab the 'match' errors, even though
+;; they're not transparent in the way required
 (define ((wrap-evaluator eval) expr)
   (define unknown "unknown")
   (define (reraise exn)
     (raise
      (let-values ([(struct-type skipped?) (struct-info exn)])
-       (if (and struct-type (not skipped?))
-         (let ([vals (cdr (vector->list (struct->vector exn unknown)))])
-           (if (memq unknown vals)
-             exn
-             (apply (struct-type-make-constructor struct-type)
-                    (format "while evaluating ~s:\n  ~a" expr (car vals))
-                    (cdr vals))))
-         exn))))
+       (cond [(exn:misc:match? exn)
+              (let ([vals (cdr (vector->list (struct->vector exn #f)))])
+                (exn:fail
+                 (format "while evaluating ~s:\n ~a" expr
+                         (car vals))
+                 (cadr vals)))]
+             [else (if (and struct-type (not skipped?))
+                       (let ([vals (cdr (vector->list (struct->vector exn unknown)))])
+                         (if (memq unknown vals)
+                             exn
+                             (apply (struct-type-make-constructor struct-type)
+                                    (format "while evaluating ~s:\n  ~a" expr (car vals))
+                                    (cdr vals))))
+                       exn)]))))
   (with-handlers ([exn? reraise]) (eval expr)))
 
 (provide check:)
