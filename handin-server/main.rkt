@@ -4,6 +4,7 @@
          racket/port
          openssl
          racket/file
+         racket/async-channel
          "private/logger.rkt"
          "private/config.rkt"
          "private/lock.rkt"
@@ -289,6 +290,25 @@
                           (post users s))))
                     (error* "upload not confirmed: ~s" v))))))))))
 
+
+;;;;;
+
+;; this queue will contain thunks that evaluate student submissions. I'm trying to
+;; make this evaluation sequential, in a FIFO style
+
+(define assignment-queue (make-async-channel))
+
+(define (add-to-assignment-queue! thunk)
+  (async-channel-put assignment-queue thunk))
+
+;; run the thunks in the queue, one at a time
+(thread
+ (λ ()
+   (let loop ()
+     (define next-thunk (async-channel-get assignment-queue))
+     (next-thunk)
+     (loop))))
+
 (define (retrieve-specific-submission data w)
   ;; Note: users are always sorted
   (define users       (a-ref data 'usernames))
@@ -561,7 +581,9 @@
          (hook 'login `([usernames ,usernames])))
        (case msg
          [(change-user-info) (change-user-info data)]
-         [(save-submission) (accept-specific-submission data r r-safe w)]
+         [(save-submission) (accept-specific-submission data r r-safe w)
+                            #;(add-to-assignment-queue!
+                             (λ () (accept-specific-submission data r r-safe w)))]
          [(get-submission) (retrieve-specific-submission data w)]
          [(get-user-info) (write+flush w (get-user-info data)) (loop)]
          [else (perror "bad message `~a'" msg)])]))
