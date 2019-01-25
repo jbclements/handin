@@ -485,6 +485,9 @@
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define max-simultaneous-evaluators 2)
+(define session-limit-sema (make-semaphore max-simultaneous-evaluators))
+
 (define (handle-connection r r-safe w)
   (define msg #f)
   (define active-assignments (assignment-list))
@@ -561,7 +564,13 @@
          (hook 'login `([usernames ,usernames])))
        (case msg
          [(change-user-info) (change-user-info data)]
-         [(save-submission) (accept-specific-submission data r r-safe w)]
+         [(save-submission)
+          (call-with-semaphore
+           session-limit-sema
+           (λ () (accept-specific-submission data r r-safe w))
+           (λ ()
+             (log-line "too many submissions being evaluated")
+             (error* "too many submissions being evaluated now; please try again")))]
          [(get-submission) (retrieve-specific-submission data w)]
          [(get-user-info) (write+flush w (get-user-info data)) (loop)]
          [else (perror "bad message `~a'" msg)])]))
